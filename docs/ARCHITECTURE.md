@@ -550,6 +550,8 @@ NormalizedEvent {
   source: "vercel" | "neon" | "clerk" | "github"
   kind: string                  // taxonomy below
   service_external_id: string
+  service_kind: string          // "github.repo" | "vercel.project" — drives Service auto-upsert
+  service_name: string
   occurred_at: ISO8601          // provider clock
   severity: DEBUG|INFO|WARN|ERROR|CRITICAL
   title: string
@@ -592,6 +594,8 @@ Step 4 runs inline in v1 (normalization is cheap). If a normalizer throws, the r
 ---
 
 ## 6. OAuth flows
+
+> **P1 status:** shipped manual connection entry instead — user creates a Connection (provider + account id) at `/dashboard/settings/connections`, gets a generated secret to paste into the provider's webhook config. Resolution: GitHub `repository.owner.login` / Vercel `payload.team.id ?? payload.user.id` matched against `Connection.externalAccountId`. The OAuth/App install flows below remain the target end-state.
 
 **Vercel** (Integration, OAuth2 install flow):
 ```
