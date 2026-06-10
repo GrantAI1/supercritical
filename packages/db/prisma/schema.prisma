@@ -1,0 +1,396 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_DATABASE_URL")
+  extensions = [vector]
+}
+
+enum Provider {
+  VERCEL
+  NEON
+  CLERK
+  GITHUB
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACTIVE
+  ERROR
+  REVOKED
+}
+
+enum Severity {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  CRITICAL
+}
+
+enum AnomalyKind {
+  METRIC_SPIKE
+  METRIC_DROP
+  RATE_ANOMALY
+  CHANGE_POINT
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  IGNORED
+}
+
+enum LinkSource {
+  MANUAL
+  INFERRED
+}
+
+enum FeedbackVerdict {
+  CONFIRMED
+  REJECTED
+}
+
+model Organization {
+  id                 String   @id @default(cuid())
+  clerkOrgId         String   @unique
+  name               String
+  plan               String   @default("free")
+  aiDailyTokenBudget Int      @default(200000)
+  createdAt          DateTime @default(now())
+
+  users        User[]
+  connections  Connection[]
+  services     Service[]
+  appGroups    AppGroup[]
+  events       Event[]
+  anomalies    Anomaly[]
+  correlations Correlation[]
+  incidents    Incident[]
+  rules        CorrelationRule[]
+  pairStats    PairStat[]
+
+  @@map("organizations")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  clerkUserId String   @unique
+  orgId       String
+  email       String
+  role        String   @default("member")
+  createdAt   DateTime @default(now())
+
+  org      Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  feedback IncidentFeedback[]
+
+  @@index([orgId])
+  @@map("users")
+}
+
+model Connection {
+  id                String           @id @default(cuid())
+  orgId             String
+  provider          Provider
+  status            ConnectionStatus @default(PENDING)
+  externalAccountId String
+  accessTokenEnc    Bytes?
+  refreshTokenEnc   Bytes?
+  tokenExpiresAt    DateTime?
+  webhookSecretEnc  Bytes?
+  scopes            String[]
+  metadata          Json             @default("{}")
+  lastSyncAt        DateTime?
+  createdAt         DateTime         @default(now())
+
+  org         Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  services    Service[]
+  pollCursors PollCursor[]
+  deliveries  WebhookDelivery[]
+
+  @@unique([orgId, provider, externalAccountId])
+  @@map("connections")
+}
+
+model Service {
+  id           String   @id @default(cuid())
+  orgId        String
+  connectionId String
+  provider     Provider
+  kind         String
+  externalId   String
+  name         String
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  connection   Connection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  links        ServiceLink[]
+  events       Event[]
+  metricPoints MetricPoint[]
+  anomalies    Anomaly[]
+
+  @@unique([connectionId, externalId])
+  @@index([orgId, provider])
+  @@map("services")
+}
+
+model AppGroup {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  createdAt DateTime @default(now())
+
+  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  links ServiceLink[]
+
+  @@unique([orgId, name])
+  @@map("app_groups")
+}
+
+model ServiceLink {
+  id         String     @id @default(cuid())
+  appGroupId String
+  serviceId  String
+  source     LinkSource @default(MANUAL)
+  confidence Float      @default(1.0)
+
+  appGroup AppGroup @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  service  Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([appGroupId, serviceId])
+  @@map("service_links")
+}
+
+model WebhookDelivery {
+  id             String    @id @default(cuid())
+  provider       Provider
+  deliveryId     String
+  connectionId   String?
+  signatureValid Boolean
+  payload        Json
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  error          String?
+
+  connection Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, deliveryId])
+  @@index([processedAt])
+  @@map("webhook_deliveries")
+}
+
+model Event {
+  id            String   @id @default(cuid())
+  orgId         String
+  serviceId     String
+  provider      Provider
+  kind          String
+  severity      Severity @default(INFO)
+  title         String
+  actor         String?
+  isChangePoint Boolean  @default(false)
+  dedupKey      String
+  occurredAt    DateTime
+  receivedAt    DateTime @default(now())
+  payload       Json
+  normalized    Json     @default("{}")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  service Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, dedupKey])
+  @@index([orgId, occurredAt(sort: Desc)])
+  @@index([serviceId, kind, occurredAt(sort: Desc)])
+  @@map("events")
+}
+
+// Partitioned by RANGE (ts) — see migration 0_init. PK must contain the
+// partition key, hence composite @@id and no surrogate id.
+model MetricPoint {
+  orgId     String
+  serviceId String
+  metric    String
+  ts        DateTime
+  value     Float
+  labels    Json?
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, metric, ts])
+  @@index([orgId, ts])
+  @@map("metric_points")
+}
+
+model PollCursor {
+  id                  String    @id @default(cuid())
+  connectionId        String
+  key                 String
+  cursor              Json      @default("{}")
+  lastRunAt           DateTime?
+  lastSuccessAt       DateTime?
+  consecutiveFailures Int       @default(0)
+
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, key])
+  @@map("poll_cursors")
+}
+
+model Anomaly {
+  id          String      @id @default(cuid())
+  orgId       String
+  serviceId   String
+  kind        AnomalyKind
+  metric      String?
+  eventKind   String?
+  windowStart DateTime
+  windowEnd   DateTime
+  score       Float
+  baseline    Json
+  eventId     String?
+  dedupKey    String
+  createdAt   DateTime    @default(now())
+
+  org     Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  service Service             @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  members CorrelationMember[]
+
+  @@unique([orgId, dedupKey])
+  @@index([orgId, windowStart(sort: Desc)])
+  @@map("anomalies")
+}
+
+model CorrelationRule {
+  id              String  @id @default(cuid())
+  orgId           String?
+  name            String
+  causeSelector   String
+  effectSelector  String
+  minLagSec       Int     @default(0)
+  maxLagSec       Int     @default(600)
+  tauSec          Int     @default(120)
+  prior           Float   @default(0.5)
+  requiresSameApp Boolean @default(true)
+  enabled         Boolean @default(true)
+  alpha           Float   @default(1)
+  beta            Float   @default(1)
+
+  org          Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  correlations Correlation[]
+
+  @@index([orgId, enabled])
+  @@map("correlation_rules")
+}
+
+model PairStat {
+  id          String   @id @default(cuid())
+  orgId       String
+  causeKey    String
+  effectKey   String
+  coCount     Int      @default(0)
+  causeCount  Int      @default(0)
+  effectCount Int      @default(0)
+  windowDays  Int      @default(30)
+  updatedAt   DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, causeKey, effectKey])
+  @@map("pair_stats")
+}
+
+model Correlation {
+  id         String   @id @default(cuid())
+  orgId      String
+  incidentId String?
+  ruleId     String?
+  score      Float
+  lagSeconds Int
+  lift       Float?
+  evidence   Json
+  createdAt  DateTime @default(now())
+
+  org      Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  incident Incident?           @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  rule     CorrelationRule?    @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  members  CorrelationMember[]
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([incidentId])
+  @@map("correlations")
+}
+
+model CorrelationMember {
+  correlationId String
+  anomalyId     String
+  role          String
+
+  correlation Correlation @relation(fields: [correlationId], references: [id], onDelete: Cascade)
+  anomaly     Anomaly     @relation(fields: [anomalyId], references: [id], onDelete: Cascade)
+
+  @@id([correlationId, anomalyId])
+  @@map("correlation_members")
+}
+
+model Incident {
+  id          String                       @id @default(cuid())
+  orgId       String
+  status      IncidentStatus               @default(OPEN)
+  severity    Severity                     @default(WARN)
+  title       String
+  summary     String?
+  windowStart DateTime
+  windowEnd   DateTime
+  serviceIds  String[]
+  embedding   Unsupported("vector(1024)")?
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+
+  org          Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  correlations Correlation[]
+  analyses     AiAnalysis[]
+  feedback     IncidentFeedback[]
+
+  @@index([orgId, status, windowStart(sort: Desc)])
+  @@map("incidents")
+}
+
+model AiAnalysis {
+  id            String   @id @default(cuid())
+  incidentId    String
+  model         String
+  promptVersion String
+  inputHash     String
+  content       String
+  structured    Json
+  inputTokens   Int
+  outputTokens  Int
+  costUsd       Decimal  @db.Decimal(10, 6)
+  createdAt     DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, inputHash])
+  @@map("ai_analyses")
+}
+
+model IncidentFeedback {
+  id         String          @id @default(cuid())
+  incidentId String
+  userId     String
+  verdict    FeedbackVerdict
+  note       String?
+  createdAt  DateTime        @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, userId])
+  @@map("incident_feedback")
+}
