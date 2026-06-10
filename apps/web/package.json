@@ -11,7 +11,10 @@
   "dependencies": {
     "@clerk/nextjs": "6.39.5",
     "@clerk/themes": "^2.4.5",
+    "@supercritical/core": "workspace:*",
+    "@supercritical/crypto": "workspace:*",
     "@supercritical/db": "workspace:*",
+    "@supercritical/ingest": "workspace:*",
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1",

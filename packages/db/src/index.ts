@@ -1,4 +1,8 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+
+export function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+}
 
 const GLOBAL_FOR_PRISMA = globalThis as unknown as { prisma?: PrismaClient };
 

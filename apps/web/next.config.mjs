@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const NEXT_CONFIG = {
-  transpilePackages: ["@supercritical/db"],
+  transpilePackages: [
+    "@supercritical/db",
+    "@supercritical/core",
+    "@supercritical/crypto",
+    "@supercritical/ingest"
+  ],
   experimental: {
     serverComponentsExternalPackages: ["@prisma/client"]
   }
