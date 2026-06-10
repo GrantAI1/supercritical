@@ -15,7 +15,7 @@ const TAILWIND_CONFIG: Config = {
         }
       },
       fontFamily: {
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"]
+        mono: ["var(--font-plex-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"]
       }
     }
   },
