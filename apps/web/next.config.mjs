@@ -7,7 +7,11 @@ const NEXT_CONFIG = {
         "@supercritical/ingest",
     ],
     experimental: {
-        serverComponentsExternalPackages: ["@prisma/client"],
+        serverComponentsExternalPackages: [
+            "@prisma/client",
+            "@neondatabase/serverless",
+            "ws",
+        ],
     },
 };
 
