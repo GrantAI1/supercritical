@@ -1,11 +1,10 @@
-import { neonConfig } from "@neondatabase/serverless";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { Prisma, PrismaClient } from "@prisma/client";
-import ws from "ws";
 
 // Neon serverless driver: Postgres over WebSocket (443). No Rust engine binary,
 // no outbound 5432 needed — works in serverless bundles and restrictive networks.
-neonConfig.webSocketConstructor = ws;
+// Uses the NATIVE WebSocket global (Node >= 22). Do NOT wire the `ws` package
+// here: webpack-bundled `ws` breaks frame masking ("t.mask is not a function").
 
 export function isUniqueViolation(err: unknown): boolean {
     return (
