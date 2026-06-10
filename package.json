@@ -1,0 +1,14 @@
+{
+  "name": "supercritical",
+  "private": true,
+  "packageManager": "pnpm@11.5.1",
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @supercritical/db generate"
+  },
+  "devDependencies": {
+    "turbo": "2.9.17"
+  }
+}
