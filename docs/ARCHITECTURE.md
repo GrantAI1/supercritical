@@ -47,7 +47,7 @@ supercritical/
 │       ├── app/
 │       │   ├── (marketing)/
 │       │   │   └── page.tsx
-│       │   ├── (dashboard)/
+│       │   ├── (dashboard)/dashboard/      # /dashboard — "/" stays with marketing
 │       │   │   ├── layout.tsx       # terminal shell: command bar, status strip, event ticker
 │       │   │   ├── page.tsx         # overview: status grid + live tape + open incidents + sparklines
 │       │   │   ├── incidents/
@@ -344,20 +344,20 @@ model Event {
   @@map("events")
 }
 
-// 1-min buckets. Monthly range partitions + retention via raw SQL migration
-// (Prisma does not manage partitions — see packages/db/prisma/sql/).
+// 1-min buckets. Partitioned by RANGE (ts) — monthly partitions + retention via
+// hand-edited migration SQL (Prisma cannot express partitioning). Composite PK:
+// Postgres requires the partition key inside every PK/unique on a partitioned table.
 model MetricPoint {
-  id        BigInt   @id @default(autoincrement())
   orgId     String
   serviceId String
-  metric    String   // "neon.connections.active", "vercel.function.coldstarts", ...
+  metric    String   // "neon.connections.active", "vercel.request.count", ...
   ts        DateTime // bucket start
   value     Float
   labels    Json?
 
   service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
-  @@unique([serviceId, metric, ts])
+  @@id([serviceId, metric, ts])
   @@index([orgId, ts])
   @@map("metric_points")
 }
