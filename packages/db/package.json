@@ -12,10 +12,14 @@
         "migrate:diff": "prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --script"
     },
     "dependencies": {
-        "@prisma/client": "6.19.3"
+        "@neondatabase/serverless": "^1.1.0",
+        "@prisma/adapter-neon": "6.19.3",
+        "@prisma/client": "6.19.3",
+        "ws": "^8.21.0"
     },
     "devDependencies": {
         "@types/node": "^20.19.42",
+        "@types/ws": "^8.18.1",
         "prisma": "6.19.3",
         "typescript": "^5.6.0"
     },
