@@ -32,7 +32,7 @@ export default async function ConnectionsPage() {
               </td>
             </tr>
           )}
-          {connections.map((c) => (
+          {connections.map((c: any) => (
             <tr key={c.id} className="border-b border-terminal-grid hover:bg-neutral-900/60">
               <td className="py-1 pr-4">{c.provider}</td>
               <td className="py-1 pr-4">{c.externalAccountId}</td>
