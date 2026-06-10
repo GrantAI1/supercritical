@@ -45,7 +45,7 @@ export async function createConnection(
         scopes: []
       }
     });
-  } catch (err) {
+  } catch (err: unknown) {
     if (isUniqueViolation(err)) {
       return { ok: false, error: "connection already exists for this account" };
     }

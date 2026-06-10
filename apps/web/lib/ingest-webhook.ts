@@ -50,7 +50,7 @@ export async function handleProviderWebhook(opts: HandlerOptions): Promise<Respo
         payload: parsed as object
       }
     });
-  } catch (err) {
+  } catch (err: unknown) {
     if (isUniqueViolation(err)) return Response.json({ ok: true, duplicate: true });
     throw err;
   }
@@ -100,7 +100,7 @@ export async function handleProviderWebhook(opts: HandlerOptions): Promise<Respo
         normalized: evt.normalized as object
       }
     });
-  } catch (err) {
+  } catch (err: unknown) {
     if (!isUniqueViolation(err)) throw err;
   }
 
