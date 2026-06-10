@@ -6,24 +6,24 @@ Cross-service correlation engine for dev infra. Vercel + Neon + Clerk + GitHub e
 
 ## 1. Key decisions
 
-| # | Decision | Choice | Rationale |
-|---|----------|--------|-----------|
-| D1 | Ingest/compute split | Webhooks are write-only fast path (verify → raw insert → normalize → 200). Correlation runs on a 1-min cron sweep, never inline. | Vercel = serverless, no daemons. 60s detection latency acceptable. Webhook handlers must return fast or providers retry/disable. |
-| D2 | Queue | None in v1. Postgres (`webhook_deliveries`) is the durable buffer. | Fewer moving parts. Vercel Queues is beta — adopt later if sweep falls behind. |
-| D3 | Time-series store | Postgres (`metric_points`), 1-min resolution, monthly partitions, retention: raw 14d / 5-min rollups 90d. | One database. Ceiling ~10⁷–10⁸ rows; flagged as R6. |
-| D4 | Correlation unit | Anomalies, not raw events. Detect per-stream anomalies first, then correlate anomalies. | Raw event × event correlation is O(N²) and noisy. Anomaly count is small. |
-| D5 | Correlation method | Hybrid: seeded declarative rules (priors) + learned co-occurrence statistics (lift). | Rules work day one (cold start). Stats improve precision over time. Pure ML = no day-one demo; pure rules = plateau. |
-| D6 | GitHub auth | GitHub App (installation tokens), not OAuth app. | Fine-grained repo perms, webhooks bundled with installation, short-lived tokens (no refresh storage), org-level install. |
-| D7 | Vercel auth | Vercel Integration (OAuth2 install flow). | One install yields API token + webhook subscription + team scoping. |
-| D8 | AI placement | Claude strictly post-pipeline. Never gates ingest, detection, or correlation. | Deterministic core. AI outage ⇒ degraded (raw evidence shown), never broken. Also cost control. |
-| D9 | Embeddings | Voyage AI `voyage-3-large` (1024-d), pgvector HNSW cosine. | **Anthropic has no embeddings API.** Second vendor unavoidable — flagged R4. |
-| D10 | Realtime UI | SWR polling @5s in v1; SSE endpoint stubbed for v2. | Ship fast; Bloomberg feel survives 5s ticks. |
-| D11 | Charts | uPlot (canvas). | Dense, 60fps with thousands of points. SVG chart libs die at terminal density. |
-| D12 | API shape | RSC reads hit `@supercritical/db` directly. Route handlers only for webhooks, OAuth, cron, mutations, streams. No tRPC. | Thin surface, fewer layers. |
-| D13 | Tenancy | `orgId` on every row, enforced via Prisma client extension (auto-filter). Postgres RLS deferred to v2. | RLS + Prisma + pooled Neon connections = friction; app-level first, flagged R11. |
-| D14 | Secrets at rest | Provider tokens AES-256-GCM encrypted with `MASTER_KEY` env var. | Minimum viable. Rotation story unspecified — flagged R9. |
-| D15 | Idempotency everywhere | `@@unique(provider, deliveryId)`, event `dedupKey`, anomaly `dedupKey`, upserts in sweep. | Webhooks redeliver, crons overlap, clocks skew. Replays must be no-ops. |
-| D16 | Config | `vercel.ts` (`@vercel/config`) for crons/headers, not vercel.json. | Current recommended config surface; typed. |
+| #   | Decision               | Choice                                                                                                                           | Rationale                                                                                                                        |
+| --- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Ingest/compute split   | Webhooks are write-only fast path (verify → raw insert → normalize → 200). Correlation runs on a 1-min cron sweep, never inline. | Vercel = serverless, no daemons. 60s detection latency acceptable. Webhook handlers must return fast or providers retry/disable. |
+| D2  | Queue                  | None in v1. Postgres (`webhook_deliveries`) is the durable buffer.                                                               | Fewer moving parts. Vercel Queues is beta — adopt later if sweep falls behind.                                                   |
+| D3  | Time-series store      | Postgres (`metric_points`), 1-min resolution, monthly partitions, retention: raw 14d / 5-min rollups 90d.                        | One database. Ceiling ~10⁷–10⁸ rows; flagged as R6.                                                                              |
+| D4  | Correlation unit       | Anomalies, not raw events. Detect per-stream anomalies first, then correlate anomalies.                                          | Raw event × event correlation is O(N²) and noisy. Anomaly count is small.                                                        |
+| D5  | Correlation method     | Hybrid: seeded declarative rules (priors) + learned co-occurrence statistics (lift).                                             | Rules work day one (cold start). Stats improve precision over time. Pure ML = no day-one demo; pure rules = plateau.             |
+| D6  | GitHub auth            | GitHub App (installation tokens), not OAuth app.                                                                                 | Fine-grained repo perms, webhooks bundled with installation, short-lived tokens (no refresh storage), org-level install.         |
+| D7  | Vercel auth            | Vercel Integration (OAuth2 install flow).                                                                                        | One install yields API token + webhook subscription + team scoping.                                                              |
+| D8  | AI placement           | Claude strictly post-pipeline. Never gates ingest, detection, or correlation.                                                    | Deterministic core. AI outage ⇒ degraded (raw evidence shown), never broken. Also cost control.                                  |
+| D9  | Embeddings             | Voyage AI `voyage-3-large` (1024-d), pgvector HNSW cosine.                                                                       | **Anthropic has no embeddings API.** Second vendor unavoidable — flagged R4.                                                     |
+| D10 | Realtime UI            | SWR polling @5s in v1; SSE endpoint stubbed for v2.                                                                              | Ship fast; Bloomberg feel survives 5s ticks.                                                                                     |
+| D11 | Charts                 | uPlot (canvas).                                                                                                                  | Dense, 60fps with thousands of points. SVG chart libs die at terminal density.                                                   |
+| D12 | API shape              | RSC reads hit `@supercritical/db` directly. Route handlers only for webhooks, OAuth, cron, mutations, streams. No tRPC.          | Thin surface, fewer layers.                                                                                                      |
+| D13 | Tenancy                | `orgId` on every row, enforced via Prisma client extension (auto-filter). Postgres RLS deferred to v2.                           | RLS + Prisma + pooled Neon connections = friction; app-level first, flagged R11.                                                 |
+| D14 | Secrets at rest        | Provider tokens AES-256-GCM encrypted with `MASTER_KEY` env var.                                                                 | Minimum viable. Rotation story unspecified — flagged R9.                                                                         |
+| D15 | Idempotency everywhere | `@@unique(provider, deliveryId)`, event `dedupKey`, anomaly `dedupKey`, upserts in sweep.                                        | Webhooks redeliver, crons overlap, clocks skew. Replays must be no-ops.                                                          |
+| D16 | Config                 | `vercel.ts` (`@vercel/config`) for crons/headers, not vercel.json.                                                               | Current recommended config surface; typed.                                                                                       |
 
 ---
 
@@ -565,12 +565,12 @@ NormalizedEvent {
 
 Taxonomy = `source.entity.action`:
 
-| Provider | Kinds (v1) | Change-points |
-|---|---|---|
-| vercel | `deployment.created/succeeded/failed/canceled`, `project.created`, `domain.*` | `deployment.succeeded` |
-| github | `push`, `pull_request.opened/merged`, `workflow_run.completed`, `release.published`, `deployment_status.*` | `push` (default branch), `pull_request.merged`, `release.published` |
-| clerk | `user.created/deleted`, `session.created/ended`, `organization.*`, `email.created` | — |
-| neon (synthetic, from polling) | `branch.created/deleted`, `compute.started/suspended`, `operation.failed` | `branch.created` |
+| Provider                       | Kinds (v1)                                                                                                 | Change-points                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| vercel                         | `deployment.created/succeeded/failed/canceled`, `project.created`, `domain.*`                              | `deployment.succeeded`                                              |
+| github                         | `push`, `pull_request.opened/merged`, `workflow_run.completed`, `release.published`, `deployment_status.*` | `push` (default branch), `pull_request.merged`, `release.published` |
+| clerk                          | `user.created/deleted`, `session.created/ended`, `organization.*`, `email.created`                         | —                                                                   |
+| neon (synthetic, from polling) | `branch.created/deleted`, `compute.started/suspended`, `operation.failed`                                  | `branch.created`                                                    |
 
 Metric names: `vercel.function.invocations`, `vercel.function.errors`, `vercel.function.coldstarts`, `vercel.function.p99ms`, `neon.connections.active`, `neon.compute.cu`, `neon.storage.bytes`, `clerk.signins.rate`, `clerk.signups.rate` (Clerk metrics derived from our own event aggregation — see R5).
 
@@ -598,6 +598,7 @@ Step 4 runs inline in v1 (normalization is cheap). If a normalizer throws, the r
 > **P1 status:** shipped manual connection entry instead — user creates a Connection (provider + account id) at `/dashboard/settings/connections`, gets a generated secret to paste into the provider's webhook config. Resolution: GitHub `repository.owner.login` / Vercel `payload.team.id ?? payload.user.id` matched against `Connection.externalAccountId`. The OAuth/App install flows below remain the target end-state.
 
 **Vercel** (Integration, OAuth2 install flow):
+
 ```
 GET /api/oauth/vercel/authorize  → redirect to Vercel install URL, state=signed nonce (CSRF)
 GET /api/oauth/vercel/callback   → exchange code → access token + team id
@@ -607,6 +608,7 @@ GET /api/oauth/vercel/callback   → exchange code → access token + team id
 ```
 
 **GitHub** (GitHub App — D6):
+
 ```
 GET /api/oauth/github/install    → redirect to app installation page
 GET /api/oauth/github/callback   → installation_id → Connection (no long-lived user token stored)
@@ -620,14 +622,14 @@ webhooks: configured once at the App level, delivered for all installations
 
 ## 7. Polling layer (Vercel Cron, defined in vercel.ts)
 
-| Cron | Cadence | Work |
-|---|---|---|
-| `poll-neon` | 1 min | Neon API: projects/branches/endpoints diff → synthetic events; consumption/metrics → MetricPoints. Cursor in PollCursor. |
-| `poll-vercel` | 1 min | Runtime stats (invocations, errors, cold starts, p99) — **data source unverified, see R1** |
-| `poll-clerk` | 5 min | Aggregate our own stored clerk events → `clerk.signins.rate` etc. MetricPoints (R5) |
-| `correlate` | 1 min | Engine sweep (§8) |
-| `embed` | 5 min | New/updated incidents → Voyage embedding → pgvector upsert |
-| `prune` | daily | Retention: raw metrics >14d → delete (5-min rollups kept 90d); processed deliveries >30d |
+| Cron          | Cadence | Work                                                                                                                     |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `poll-neon`   | 1 min   | Neon API: projects/branches/endpoints diff → synthetic events; consumption/metrics → MetricPoints. Cursor in PollCursor. |
+| `poll-vercel` | 1 min   | Runtime stats (invocations, errors, cold starts, p99) — **data source unverified, see R1**                               |
+| `poll-clerk`  | 5 min   | Aggregate our own stored clerk events → `clerk.signins.rate` etc. MetricPoints (R5)                                      |
+| `correlate`   | 1 min   | Engine sweep (§8)                                                                                                        |
+| `embed`       | 5 min   | New/updated incidents → Voyage embedding → pgvector upsert                                                               |
+| `prune`       | daily   | Retention: raw metrics >14d → delete (5-min rollups kept 90d); processed deliveries >30d                                 |
 
 All cron routes check `Authorization: Bearer ${CRON_SECRET}`. Each poller: per-connection iteration, exponential backoff on failures (`consecutiveFailures`), jitter, hard per-invocation time budget (Fluid Compute 300s default is plenty).
 
@@ -638,15 +640,18 @@ All cron routes check `Authorization: Bearer ${CRON_SECRET}`. Each poller: per-c
 Pure functions in `@supercritical/correlation`. Sweep = watermark-driven, idempotent, re-scans trailing 10 min overlap for late arrivals (correlation uses `occurredAt`, webhooks deliver late — R8).
 
 **Stage A — per-stream anomaly detection**
+
 - Metrics: robust z-score per (service, metric): `z = (x − median) / MAD` over trailing 60-min window; `|z| ≥ 4` sustained ≥ 2 consecutive buckets ⇒ `METRIC_SPIKE`/`METRIC_DROP`. Adjacent windows merge. Baseline snapshot stored on the Anomaly (explainability).
 - Event rates: count per (service, kind-class, 1-min bucket); Poisson tail probability vs trailing baseline rate; surprise `s = −log₁₀(p) ≥ 3` ⇒ `RATE_ANOMALY`.
 - Change-points: every deploy/merge/config event ⇒ `CHANGE_POINT` anomaly unconditionally (they're pivots, not outliers).
 
 **Stage B — candidate pairing**
-- For each new anomaly E (effect), look back over `[occurredAt − MAX_LAG, occurredAt]`, `MAX_LAG = 900s`, for anomalies C (cause candidate) in *other* services.
+
+- For each new anomaly E (effect), look back over `[occurredAt − MAX_LAG, occurredAt]`, `MAX_LAG = 900s`, for anomalies C (cause candidate) in _other_ services.
 - Topology prune: same AppGroup ⇒ keep; cross-group ⇒ keep only if either service unmapped (penalized in scoring).
 
 **Stage C — scoring**
+
 ```
 score(C→E) = clamp01( w₁·rulePrior + w₂·liftTerm + w₃·lagKernel + w₄·topoBonus + w₅·sevBonus )
   w = (0.40, 0.25, 0.20, 0.10, 0.05)
@@ -658,14 +663,17 @@ score(C→E) = clamp01( w₁·rulePrior + w₂·liftTerm + w₃·lagKernel + w�
   sevBonus  = scaled effect severity
 Thresholds: θ_surface = 0.55 (persist Correlation), θ_notify = 0.75 (page-worthy)
 ```
-Evidence JSON stores every term — UI and Claude both show *why* a correlation scored what it did. Never claim causality; the engine emits "correlated, lag X, lift Y, rule Z" — causal narrative is Claude's job, labeled as hypothesis.
+
+Evidence JSON stores every term — UI and Claude both show _why_ a correlation scored what it did. Never claim causality; the engine emits "correlated, lag X, lift Y, rule Z" — causal narrative is Claude's job, labeled as hypothesis.
 
 **Stage D — incident assembly**
+
 - Graph: nodes = anomalies, edges = correlations ≥ θ_surface within rolling 30-min window; connected components ⇒ incident candidates.
 - Merge into existing OPEN incident if service-set Jaccard ≥ 0.5 ∧ time gap < 15 min; else create. Title templated from highest-scoring correlation ("Neon connection spike 47s after deploy dpl_x").
 - Severity = max member severity, escalated one step if component spans ≥ 3 services.
 
 **Stage E — learning loop**
+
 - Every sweep updates PairStat counts (co-occurrences + marginals, 30-day rolling).
 - IncidentFeedback CONFIRMED ⇒ rule α += 1; REJECTED ⇒ β += 1 (Beta posterior shifts prior). Rejected pairs also damp PairStat.
 
@@ -686,18 +694,18 @@ Evidence JSON stores every term — UI and Claude both show *why* a correlation 
 
 Reads = RSC direct via `@supercritical/db` (D12). Route handlers only:
 
-| Route | Method | Purpose |
-|---|---|---|
-| `/api/webhooks/{vercel,github,clerk}` | POST | ingest (public, signature-gated) |
-| `/api/oauth/...` | GET | flows (§6) |
-| `/api/cron/...` | GET | schedulers (CRON_SECRET) |
-| `/api/incidents/[id]` | PATCH | status / ack |
-| `/api/incidents/[id]/feedback` | POST | verdict (feeds Stage E) |
-| `/api/incidents/[id]/explain` | POST | SSE-streamed Claude interactive analysis |
-| `/api/events` | GET | cursor-paginated tape (5s polling) |
-| `/api/metrics/series` | GET | (serviceId, metric, range, step) for charts |
-| `/api/topology` | POST/DELETE | manage ServiceLinks |
-| `/api/connections/[id]` | DELETE | revoke + token wipe |
+| Route                                 | Method      | Purpose                                     |
+| ------------------------------------- | ----------- | ------------------------------------------- |
+| `/api/webhooks/{vercel,github,clerk}` | POST        | ingest (public, signature-gated)            |
+| `/api/oauth/...`                      | GET         | flows (§6)                                  |
+| `/api/cron/...`                       | GET         | schedulers (CRON_SECRET)                    |
+| `/api/incidents/[id]`                 | PATCH       | status / ack                                |
+| `/api/incidents/[id]/feedback`        | POST        | verdict (feeds Stage E)                     |
+| `/api/incidents/[id]/explain`         | POST        | SSE-streamed Claude interactive analysis    |
+| `/api/events`                         | GET         | cursor-paginated tape (5s polling)          |
+| `/api/metrics/series`                 | GET         | (serviceId, metric, range, step) for charts |
+| `/api/topology`                       | POST/DELETE | manage ServiceLinks                         |
+| `/api/connections/[id]`               | DELETE      | revoke + token wipe                         |
 
 ---
 
@@ -721,6 +729,7 @@ Claude is called exactly three ways — never in ingest/detection path (D8):
 3. **`embedIncident(incident_id)`** — Voyage, not Claude (R4).
 
 **ContextPack** (deterministic order ⇒ stable `inputHash` cache key; ~20k token budget):
+
 1. incident header + anomalies with baseline stats
 2. correlation evidence (rule, lift, lag, term breakdown)
 3. change-point payloads in full (deploy meta, commit messages, PR titles)
@@ -738,27 +747,27 @@ Claude is called exactly three ways — never in ingest/detection path (D8):
 
 ## 13. Risks & underspecified (resolve before building)
 
-| # | Risk | Severity | Position |
-|---|---|---|---|
-| R1 | **Vercel cold-start/runtime metrics are NOT webhooked.** The headline demo (cold-start spike → pool exhaustion) depends on runtime data: Vercel Observability API / Drains are plan-gated and shapes unverified. | **HIGH — verify first** | Spike this before any engine work. Fallbacks: log drains → ingest endpoint; or demo on deploy→error correlation instead. |
-| R2 | **Neon live connection counts**: public API gives projects/ops/consumption (coarse, lagging). Real-time pool stats options: (a) Neon metrics export (OTel) — needs a receiver, we're serverless; (b) direct `pg_stat_activity` polling on customer DB — requires their connection string (big trust ask, must be explicit opt-in + read-only role); (c) coarse consumption only. | **HIGH** | v1: (c) + optional (b) behind explicit consent. Decide before schema freeze of metric names. |
-| R3 | **Entity resolution / topology**: no API says "this Neon DB serves this Vercel project." Heuristics (Vercel env vars contain Neon host — reading customer env vars is a sensitive scope) vs manual mapping. | **HIGH** | v1: manual topology UI + INFERRED suggestions (name similarity, integration metadata). Correlation quality is bounded by this. |
-| R4 | **Anthropic has no embeddings API** — pgvector requires a second vendor (Voyage). Contradicts "Anthropic-only" framing. | MED | Accept Voyage; isolate behind `embeddings.ts` interface. |
-| R5 | **Clerk has no metrics API** — auth metrics must be derived by aggregating Clerk webhook events we store. No backfill before install; baselines need ~24h warm-up. | MED | Accept; document warm-up. |
-| R6 | **MetricPoint volume in Postgres**: 1-min × metrics × services; fine to ~10⁷ rows, then partitions/retention mandatory, Timescale/ClickHouse eventually. Prisma can't manage partitions ⇒ raw SQL migrations from day one. | MED | D3 + prune cron. Revisit at 100 orgs. |
-| R7 | **Vercel cron granularity is plan-gated** (Hobby = daily). 1-min sweeps need Pro. | LOW-MED | Budget for Pro. |
-| R8 | **Clock skew + late webhook delivery**: correlation on `occurredAt`, providers retry for minutes. Sweep must re-scan trailing overlap; all writes idempotent. | MED | Designed in (§8); test with replay fixtures. |
-| R9 | **Token encryption key management**: single `MASTER_KEY` env var, no rotation story. | MED | Acceptable v1; write ADR for envelope encryption later. |
-| R10 | **False-positive economics**: product credibility dies on noisy correlations. No ground truth at launch. | **HIGH (product)** | Conservative θ, feedback loop (Stage E), and a "shadow mode" first 2 weeks per org: detect + log, don't notify. |
-| R11 | **Tenancy enforcement is app-level only** (Prisma extension). One missed filter = cross-org leak. | MED | Extension + tests that assert orgId on every query; RLS in v2. |
-| R12 | Underspecified product surface: alert delivery channels (in-app only? Slack/email?), retention/billing tiers, detection-latency SLO, onboarding (self-serve vs design partners). Spec pinned Next.js 14 — Next 15/16 current; confirm before scaffold. | MED | Decide pre-build; none block schema. |
+| #   | Risk                                                                                                                                                                                                                                                                                                                                                                             | Severity                | Position                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| R1  | **Vercel cold-start/runtime metrics are NOT webhooked.** The headline demo (cold-start spike → pool exhaustion) depends on runtime data: Vercel Observability API / Drains are plan-gated and shapes unverified.                                                                                                                                                                 | **HIGH — verify first** | Spike this before any engine work. Fallbacks: log drains → ingest endpoint; or demo on deploy→error correlation instead.       |
+| R2  | **Neon live connection counts**: public API gives projects/ops/consumption (coarse, lagging). Real-time pool stats options: (a) Neon metrics export (OTel) — needs a receiver, we're serverless; (b) direct `pg_stat_activity` polling on customer DB — requires their connection string (big trust ask, must be explicit opt-in + read-only role); (c) coarse consumption only. | **HIGH**                | v1: (c) + optional (b) behind explicit consent. Decide before schema freeze of metric names.                                   |
+| R3  | **Entity resolution / topology**: no API says "this Neon DB serves this Vercel project." Heuristics (Vercel env vars contain Neon host — reading customer env vars is a sensitive scope) vs manual mapping.                                                                                                                                                                      | **HIGH**                | v1: manual topology UI + INFERRED suggestions (name similarity, integration metadata). Correlation quality is bounded by this. |
+| R4  | **Anthropic has no embeddings API** — pgvector requires a second vendor (Voyage). Contradicts "Anthropic-only" framing.                                                                                                                                                                                                                                                          | MED                     | Accept Voyage; isolate behind `embeddings.ts` interface.                                                                       |
+| R5  | **Clerk has no metrics API** — auth metrics must be derived by aggregating Clerk webhook events we store. No backfill before install; baselines need ~24h warm-up.                                                                                                                                                                                                               | MED                     | Accept; document warm-up.                                                                                                      |
+| R6  | **MetricPoint volume in Postgres**: 1-min × metrics × services; fine to ~10⁷ rows, then partitions/retention mandatory, Timescale/ClickHouse eventually. Prisma can't manage partitions ⇒ raw SQL migrations from day one.                                                                                                                                                       | MED                     | D3 + prune cron. Revisit at 100 orgs.                                                                                          |
+| R7  | **Vercel cron granularity is plan-gated** (Hobby = daily). 1-min sweeps need Pro.                                                                                                                                                                                                                                                                                                | LOW-MED                 | Budget for Pro.                                                                                                                |
+| R8  | **Clock skew + late webhook delivery**: correlation on `occurredAt`, providers retry for minutes. Sweep must re-scan trailing overlap; all writes idempotent.                                                                                                                                                                                                                    | MED                     | Designed in (§8); test with replay fixtures.                                                                                   |
+| R9  | **Token encryption key management**: single `MASTER_KEY` env var, no rotation story.                                                                                                                                                                                                                                                                                             | MED                     | Acceptable v1; write ADR for envelope encryption later.                                                                        |
+| R10 | **False-positive economics**: product credibility dies on noisy correlations. No ground truth at launch.                                                                                                                                                                                                                                                                         | **HIGH (product)**      | Conservative θ, feedback loop (Stage E), and a "shadow mode" first 2 weeks per org: detect + log, don't notify.                |
+| R11 | **Tenancy enforcement is app-level only** (Prisma extension). One missed filter = cross-org leak.                                                                                                                                                                                                                                                                                | MED                     | Extension + tests that assert orgId on every query; RLS in v2.                                                                 |
+| R12 | Underspecified product surface: alert delivery channels (in-app only? Slack/email?), retention/billing tiers, detection-latency SLO, onboarding (self-serve vs design partners). Spec pinned Next.js 14 — Next 15/16 current; confirm before scaffold.                                                                                                                           | MED                     | Decide pre-build; none block schema.                                                                                           |
 
 ---
 
 ## 14. Build order
 
 1. **P0** — scaffold: turborepo, `db` + schema + raw SQL migrations, Clerk auth shell, org bootstrap webhook.
-2. **P1** — ingest: GitHub App + Vercel integration webhooks → normalized events → live event tape. *Visible value: unified tape.*
+2. **P1** — ingest: GitHub App + Vercel integration webhooks → normalized events → live event tape. _Visible value: unified tape._
 3. **P2** — polling: Neon + Vercel + Clerk-aggregate metrics → sparklines. **Gate: R1/R2 spike results.**
 4. **P3** — engine: rules-only sweep → anomalies → correlations → incidents. Tested against replay fixtures before any real traffic.
 5. **P4** — AI: ContextPack + explain + chat + embeddings + similar-incidents.

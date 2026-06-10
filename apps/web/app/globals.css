@@ -3,24 +3,24 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+    color-scheme: dark;
 }
 
 body {
-  @apply bg-terminal-bg text-neutral-200 font-mono antialiased;
-  font-variant-numeric: tabular-nums;
+    @apply bg-terminal-bg text-neutral-200 font-mono antialiased;
+    font-variant-numeric: tabular-nums;
 }
 
 @keyframes pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.2;
-  }
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.2;
+    }
 }
 
 .live-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+    animation: pulse-dot 2s ease-in-out infinite;
 }
